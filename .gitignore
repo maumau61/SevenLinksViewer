@@ -1,0 +1,30 @@
+# ── Build output ──────────────────────────────────────────────
+bin/
+obj/
+out/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.dll
+*.exe
+*.pdb
+
+# ── IDE / editor ──────────────────────────────────────────────
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# ── Claude Code (local machine settings) ─────────────────────
+.claude/settings.local.json
+
+# ── Camera footage (personal data — never commit) ────────────
+Camera/
+*.media
+
+# ── OS cruft ──────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store

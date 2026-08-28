@@ -1,0 +1,18 @@
+# Normalize line endings — Git stores LF, checks out native on Windows.
+* text=auto
+
+# C# / project files use CRLF in the working tree on Windows
+*.cs        text eol=crlf
+*.xaml      text eol=crlf
+*.csproj    text eol=crlf
+*.sln       text eol=crlf
+
+# Cross-platform / tooling files stay LF
+*.yml       text eol=lf
+*.md        text eol=lf
+.editorconfig text eol=lf
+
+# Binary assets — never touch
+*.png binary
+*.jpg binary
+*.media binary

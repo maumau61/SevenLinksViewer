@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{4C11BB9F-E18D-4D2F-A4CB-BB34676A4520}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MediaProbe", "src\MediaProbe\MediaProbe.csproj", "{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SevenLinksViewer", "src\SevenLinksViewer\SevenLinksViewer.csproj", "{A2B48678-A88B-42D1-800B-866BF7C9C147}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{C8AE8078-248B-4695-8FC7-619EEF5F0C8A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A2B48678-A88B-42D1-800B-866BF7C9C147}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2B48678-A88B-42D1-800B-866BF7C9C147}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2B48678-A88B-42D1-800B-866BF7C9C147}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2B48678-A88B-42D1-800B-866BF7C9C147}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2A4B056C-44A7-4DF0-9DAF-A5FFC6D32EAB} = {4C11BB9F-E18D-4D2F-A4CB-BB34676A4520}
+		{A2B48678-A88B-42D1-800B-866BF7C9C147} = {4C11BB9F-E18D-4D2F-A4CB-BB34676A4520}
+	EndGlobalSection
+EndGlobal
