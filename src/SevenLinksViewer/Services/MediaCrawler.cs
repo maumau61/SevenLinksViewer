@@ -5,20 +5,44 @@ namespace SevenLinksViewer.Services;
 
 public sealed class MediaCrawler
 {
-    public IReadOnlyList<EventClip> Crawl(string cameraRoot)
+    /// <summary>
+    /// First pass: enumerate every event folder and group it into days WITHOUT reading any
+    /// .media file contents. This keeps startup cheap and memory small for large cards — the
+    /// per-clip chunk lists and duration estimates are deferred to <see cref="LoadClips"/>,
+    /// which only runs when the user opens a day.
+    /// </summary>
+    public IReadOnlyList<CameraDay> CrawlDays(string cameraRoot)
     {
         var dcim = Path.Combine(cameraRoot, "DCIM");
         var root = Directory.Exists(dcim) ? dcim : cameraRoot;
-        if (!Directory.Exists(root)) return Array.Empty<EventClip>();
+        if (!Directory.Exists(root)) return Array.Empty<CameraDay>();
 
         return Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
             .Select(TryParseEventFolder)
-            .OfType<EventClip>()
-            .OrderBy(e => e.StartUtc)
+            .OfType<EventFolder>()
+            .GroupBy(f => f.StartUtc.ToLocalTime().Date)
+            .OrderByDescending(g => g.Key)
+            .Select(g => new CameraDay
+            {
+                Date = g.Key,
+                Folders = g.OrderByDescending(f => f.StartUtc).ToList()
+            })
             .ToList();
     }
 
-    private static EventClip? TryParseEventFolder(string folder)
+    /// <summary>
+    /// Second pass: build the playable clips for a single day. This reads each folder's .media
+    /// chunk list and estimates durations (opening chunk headers), so the file I/O is scoped to
+    /// the one day the user actually opened rather than the whole card.
+    /// </summary>
+    public IReadOnlyList<EventClip> LoadClips(CameraDay day) =>
+        day.Folders
+            .Select(BuildClip)
+            .OfType<EventClip>()
+            .OrderByDescending(e => e.StartUtc)
+            .ToList();
+
+    private static EventFolder? TryParseEventFolder(string folder)
     {
         var name = Path.GetFileName(folder);
         var underscore = name.IndexOf('_');
@@ -26,15 +50,26 @@ public sealed class MediaCrawler
         if (!long.TryParse(unixPart, out var unixSeconds)) return null;
         if (unixSeconds < 1_000_000_000 || unixSeconds > 4_000_000_000) return null;
 
-        var chunks = Directory.GetFiles(folder, "*.media")
+        // Cheap existence check so empty folders don't show up as days — but don't
+        // materialize the chunk list or open any file yet.
+        if (!Directory.EnumerateFiles(folder, "*.media").Any()) return null;
+
+        return new EventFolder(
+            DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime,
+            folder);
+    }
+
+    private static EventClip? BuildClip(EventFolder folder)
+    {
+        var chunks = Directory.GetFiles(folder.FolderPath, "*.media")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (chunks.Length == 0) return null;
 
         return new EventClip
         {
-            StartUtc = DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime,
-            FolderPath = folder,
+            StartUtc = folder.StartUtc,
+            FolderPath = folder.FolderPath,
             ChunkFiles = chunks,
             EstimatedDuration = EstimateDuration(chunks)
         };
