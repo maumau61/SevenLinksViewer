@@ -17,16 +17,6 @@
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="#EEE"/>
         </Style>
-
-        <CollectionViewSource x:Key="ClipsView">
-            <CollectionViewSource.GroupDescriptions>
-                <PropertyGroupDescription PropertyName="DayLabel"/>
-            </CollectionViewSource.GroupDescriptions>
-            <CollectionViewSource.SortDescriptions>
-                <componentModel:SortDescription PropertyName="StartUtc" Direction="Descending"
-                                                xmlns:componentModel="clr-namespace:System.ComponentModel;assembly=WindowsBase"/>
-            </CollectionViewSource.SortDescriptions>
-        </CollectionViewSource>
     </Window.Resources>
     <DockPanel>
         <!-- Toolbar -->
@@ -47,44 +37,60 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Single list of clips, grouped by day -->
-            <DockPanel Grid.Column="0">
-                <TextBlock DockPanel.Dock="Top" Text="Clips" FontWeight="Bold" Margin="8,8,8,4"/>
-                <ListBox x:Name="ClipList" Margin="4"
-                         SelectionChanged="ClipList_SelectionChanged"
-                         ItemsSource="{Binding Source={StaticResource ClipsView}}"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="4,3">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="{Binding TimeLabel}" FontFamily="Consolas" FontWeight="SemiBold"/>
-                                    <TextBlock Text="{Binding DetailLabel}" FontSize="11" Foreground="#AAA"/>
+            <!-- Days on top; clips for the selected day below -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="5"/>
+                    <RowDefinition Height="2*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Day list (cheap first pass, no .media read) -->
+                <DockPanel Grid.Row="0">
+                    <TextBlock DockPanel.Dock="Top" Text="Days" FontWeight="Bold" Margin="8,8,8,4"/>
+                    <ListBox x:Name="DayList" Margin="4"
+                             SelectionChanged="DayList_SelectionChanged"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4,3">
+                                    <TextBlock Text="{Binding DayLabel}" FontWeight="SemiBold" Foreground="#FFD200"/>
+                                    <TextBlock Text="{Binding CountLabel}" FontSize="11" Foreground="#AAA"/>
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="X" Width="24" Padding="0" Margin="6,0,0,0"
-                                        ToolTip="Delete this event folder from disk"
-                                        Click="DeleteClipButton_Click"
-                                        VerticalAlignment="Center"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                    <ListBox.GroupStyle>
-                        <GroupStyle>
-                            <GroupStyle.HeaderTemplate>
-                                <DataTemplate>
-                                    <Border Background="#37373D" Padding="8,4" Margin="0,4,0,2">
-                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#FFD200"/>
-                                    </Border>
-                                </DataTemplate>
-                            </GroupStyle.HeaderTemplate>
-                        </GroupStyle>
-                    </ListBox.GroupStyle>
-                </ListBox>
-            </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+
+                <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="#3C3C3C"/>
+
+                <!-- Clips for the selected day (lazily loaded on selection) -->
+                <DockPanel Grid.Row="2">
+                    <TextBlock DockPanel.Dock="Top" x:Name="ClipsHeader" Text="Clips" FontWeight="Bold" Margin="8,8,8,4"/>
+                    <ListBox x:Name="ClipList" Margin="4"
+                             SelectionChanged="ClipList_SelectionChanged"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding TimeLabel}" FontFamily="Consolas" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding DetailLabel}" FontSize="11" Foreground="#AAA"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="X" Width="24" Padding="0" Margin="6,0,0,0"
+                                            ToolTip="Delete this event folder from disk"
+                                            Click="DeleteClipButton_Click"
+                                            VerticalAlignment="Center"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Grid>
 
             <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#3C3C3C"/>
 

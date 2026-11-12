@@ -29,14 +29,16 @@ A `.media` file is a flat stream of **records**:
 └───────────────────────┴──────────────────────────┘
 ```
 
-Between records the file also contains audio fragments and zero padding, which are **not**
-video and must be skipped by scanning for the next valid header.
+Records come in two kinds — **video** and **audio** (distinguished by the marker byte, see
+below) — interleaved, with zero padding in between. When extracting video, the audio records and
+padding are skipped by scanning for the next valid header; see [Audio records](#audio-records-marker-3)
+for recovering sound.
 
 ### 24-byte record header
 
 | Offset  | Size | Meaning                                                                    |
 |---------|------|----------------------------------------------------------------------------|
-| `00..03`| u32  | Marker: `1` = IDR access unit (VPS+SPS+PPS+IDR), `0` = P-frame TRAIL        |
+| `00..03`| u32  | Marker: `1` = IDR access unit (VPS+SPS+PPS+IDR), `0` = P-frame TRAIL, `3` = audio |
 | `04..07`| u32  | Payload length in bytes (little-endian)                                    |
 | `08..11`| u32  | Per-frame id                                                               |
 | `12`    | u8   | **Firmware flag byte** — see below ⚠️                                       |
@@ -44,8 +46,35 @@ video and must be skipped by scanning for the next valid header.
 | `16..19`| u32  | Presentation/decode timestamp, microseconds (little-endian)                |
 | `20..23`| —    | Reserved, always zero                                                       |
 
-The payload immediately following the header is `length` bytes of HEVC Annex-B and always
-starts with a `00 00 00 01` NAL start code.
+For **video** records (marker `0`/`1`) the payload is `length` bytes of HEVC Annex-B and always
+starts with a `00 00 00 01` NAL start code. **Audio** records (marker `3`) are described below.
+
+## Audio records (marker `3`)
+
+Audio is stored as its own records interleaved between the video ones, using the **same 24-byte
+header framing** — only the marker byte `[0..3]` differs (`3` instead of `0`/`1`). There is no
+start code to anchor on, so the fixed header fields (flag `[12] >= 0x90`, literal `01 00 00` at
+`[13..15]`, zero `[20..23]`) carry the detection.
+
+The payload is raw **PCM**:
+
+| Property    | Value                              |
+|-------------|------------------------------------|
+| Codec       | signed 16-bit little-endian (`s16le`) |
+| Sample rate | 8 kHz                              |
+| Channels    | 1 (mono)                           |
+| Frame size  | 640 bytes = 320 samples = 40 ms    |
+
+Derived from the records themselves: payload length is a constant 640 bytes and the PTS delta
+between consecutive audio records is 40000 µs, so 640 bytes ÷ 40 ms = 16000 B/s = 8000 Hz × 2
+bytes × 1 channel. (G.711/8-bit would be 320 bytes — ruled out.) Quiet clips store near-silent
+all-zero payloads; the framing is unchanged.
+
+To recover sound, concatenate the marker-`3` payloads in PTS order into one `s16le` stream and
+mux it alongside the video (the app encodes it to AAC). See
+`MediaConcatenator.IsAudioRecordHeader` / `WriteCleaned` and `FFmpegService.RemuxHevcToMp4`.
+Inspect the raw audio bytes of any chunk with
+`dotnet run --project src/MediaProbe -- <folder> --dump-audio audio.bin`.
 
 ## ⚠️ The firmware flag byte (offset 12)
 

@@ -2,17 +2,19 @@ using System.Text;
 
 if (args.Length < 1)
 {
-    Console.WriteLine("Usage: MediaProbe <path-to-.media-file-or-event-folder> [--extract <output.h265>] [--clean-extract <cleaned.h265>]");
+    Console.WriteLine("Usage: MediaProbe <path-to-.media-file-or-event-folder> [--extract <output.h265>] [--clean-extract <cleaned.h265>] [--dump-audio <audio.bin>]");
     return 1;
 }
 
 var input = args[0];
 string? extractPath = null;
 string? cleanExtractPath = null;
+string? dumpAudioPath = null;
 for (var i = 1; i < args.Length - 1; i++)
 {
     if (args[i] == "--extract") extractPath = args[i + 1];
     if (args[i] == "--clean-extract") cleanExtractPath = args[i + 1];
+    if (args[i] == "--dump-audio") dumpAudioPath = args[i + 1];
 }
 
 var files = File.Exists(input)
@@ -39,6 +41,12 @@ if (cleanExtractPath != null)
     cleanStream = File.Create(cleanExtractPath);
     Console.WriteLine($"Extracting CLEANED HEVC bitstream (per-GOP headers stripped) to {cleanExtractPath}");
 }
+FileStream? audioStream = null;
+if (dumpAudioPath != null)
+{
+    audioStream = File.Create(dumpAudioPath);
+    Console.WriteLine($"Dumping non-video (audio + padding, zero-trimmed) bytes to {dumpAudioPath}");
+}
 
 var totalNalCounts = new Dictionary<int, int>();
 
@@ -54,6 +62,7 @@ foreach (var file in files)
     AnalyzeNalsBetweenHeaders(bytes);
     AnalyzeChunkTail(bytes);
     SearchFakeStartCodes(bytes);
+    AnalyzeAudio(bytes, audioStream);
     foreach (var kv in nalCounts)
     {
         totalNalCounts[kv.Key] = totalNalCounts.GetValueOrDefault(kv.Key) + kv.Value;
@@ -62,6 +71,7 @@ foreach (var file in files)
 
 extractStream?.Dispose();
 cleanStream?.Dispose();
+audioStream?.Dispose();
 
 Console.WriteLine();
 Console.WriteLine("=== TOTAL NAL UNIT SUMMARY ===");
@@ -374,6 +384,142 @@ static void ScanLooseHeaders(byte[] b)
         hits++;
     }
     Console.WriteLine($"Total hits: {hits}");
+}
+
+// Isolate the non-video bytes. We walk the VIDEO records exactly the way the app's
+// MediaConcatenator does (anchored on the 24-byte header + HEVC start code), so every byte
+// NOT consumed by a video record is "non-video" = audio fragments + zero padding. That makes
+// no assumption about the audio's own structure — it's purely the complement of the video.
+// Then we try to interpret each non-video region as records and look for codec signatures so
+// the audio format can be reverse-engineered.
+static void AnalyzeAudio(byte[] bytes, FileStream? audioStream)
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Audio / non-video byte analysis ===");
+
+    // 1. Map the video records (same logic as MediaConcatenator.IsRecordHeader).
+    var videoSpans = new List<(int Start, int End)>();
+    var pos = 0;
+    while (pos + 24 <= bytes.Length)
+    {
+        if (!IsVideoRecordHeader(bytes, pos)) { pos++; continue; }
+        var len = ReadLE32(bytes, pos + 4);
+        if (len <= 0 || pos + 24 + len > bytes.Length) { pos++; continue; }
+        videoSpans.Add((pos, pos + 24 + len));
+        pos += 24 + len;
+    }
+
+    // 2. The complement of the video spans is the non-video data.
+    var gaps = new List<(int Start, int End)>();
+    var cursor = 0;
+    foreach (var (s, e) in videoSpans)
+    {
+        if (s > cursor) gaps.Add((cursor, s));
+        cursor = e;
+    }
+    if (cursor < bytes.Length) gaps.Add((cursor, bytes.Length));
+
+    long totalGap = 0, totalNonZero = 0;
+    foreach (var (s, e) in gaps)
+    {
+        totalGap += e - s;
+        for (var i = s; i < e; i++) if (bytes[i] != 0) totalNonZero++;
+    }
+
+    Console.WriteLine($"  video records: {videoSpans.Count}, non-video regions: {gaps.Count}");
+    Console.WriteLine($"  non-video bytes: {totalGap:N0} total, {totalNonZero:N0} non-zero, {totalGap - totalNonZero:N0} zero padding");
+
+    // 3. Inspect each non-video region: trim pure padding, show a hex/ASCII preview, probe for
+    //    an embedded record header and common audio codec signatures, and dump the content.
+    var recordLengths = new List<int>();
+    var recordPts = new List<uint>();
+    var shown = 0;
+    var adtsSeen = false;
+    foreach (var (s, e) in gaps)
+    {
+        var cs = s; while (cs < e && bytes[cs] == 0) cs++;
+        var ce = e; while (ce > cs && bytes[ce - 1] == 0) ce--;
+        if (ce == cs) continue; // region is pure zero padding
+
+        if (LooksLikeRecordHeader(bytes, cs) && cs + 24 <= bytes.Length)
+        {
+            recordLengths.Add(ReadLE32(bytes, cs + 4));
+            recordPts.Add((uint)ReadLE32(bytes, cs + 16));
+        }
+
+        if (shown < 12)
+        {
+            Console.WriteLine($"  region 0x{s:X}..0x{e:X} ({e - s} bytes; content {ce - cs} @ 0x{cs:X}):");
+            Console.WriteLine($"    {HexAscii(bytes, cs, Math.Min(ce, cs + 32))}");
+            if (LooksLikeRecordHeader(bytes, cs) && cs + 24 <= bytes.Length)
+                Console.WriteLine($"    -> 24-byte record header: marker={ReadLE32(bytes, cs)} len={ReadLE32(bytes, cs + 4)} id={ReadLE32(bytes, cs + 8)} flag=0x{bytes[cs + 12]:X2} pts={ReadLE32(bytes, cs + 16)}");
+            for (var i = cs; i < ce - 1; i++)
+            {
+                if (bytes[i] == 0xFF && (bytes[i + 1] & 0xF6) == 0xF0)
+                {
+                    Console.WriteLine($"    -> possible ADTS-AAC syncword @ 0x{i:X}");
+                    adtsSeen = true;
+                    break;
+                }
+            }
+            shown++;
+        }
+
+        audioStream?.Write(bytes, cs, ce - cs);
+    }
+    if (gaps.Count > shown)
+        Console.WriteLine($"    … {gaps.Count - shown} more region(s) not shown");
+
+    // 4. Summarize structure so a format guess can be made.
+    if (recordLengths.Count > 0)
+    {
+        var distinct = recordLengths.Distinct().OrderBy(x => x).ToArray();
+        Console.WriteLine($"  non-video regions starting with a record header: {recordLengths.Count}");
+        Console.WriteLine($"    payload lengths: min={recordLengths.Min()} max={recordLengths.Max()} distinct={distinct.Length} [{string.Join(",", distinct.Take(8))}{(distinct.Length > 8 ? ",…" : "")}]");
+        if (distinct.Length <= 2)
+            Console.WriteLine("    -> near-constant payload size suggests fixed-frame audio (PCM or G.711/ADPCM), not AAC");
+        var deltas = recordPts.Zip(recordPts.Skip(1), (a, b) => (long)b - a).Where(d => d > 0).ToArray();
+        if (deltas.Length > 0)
+            Console.WriteLine($"    pts deltas (µs): min={deltas.Min()} max={deltas.Max()} median={deltas.OrderBy(x => x).ElementAt(deltas.Length / 2)}");
+    }
+    if (adtsSeen)
+        Console.WriteLine("  -> ADTS-AAC syncword(s) present; audio is likely AAC in ADTS framing");
+}
+
+static bool IsVideoRecordHeader(byte[] b, int i)
+{
+    if (i + 28 > b.Length) return false;
+    if (b[i + 1] != 0 || b[i + 2] != 0 || b[i + 3] != 0) return false;
+    if (b[i] != 0 && b[i] != 1) return false;
+    if (b[i + 12] < 0x90) return false;
+    if (b[i + 13] != 0x01 || b[i + 14] != 0 || b[i + 15] != 0) return false;
+    if (b[i + 20] != 0 || b[i + 21] != 0 || b[i + 22] != 0 || b[i + 23] != 0) return false;
+    // Payload must start with an HEVC Annex-B start code.
+    return b[i + 24] == 0 && b[i + 25] == 0 && b[i + 26] == 0 && b[i + 27] == 1;
+}
+
+// Relaxed match: the shared record-header shape WITHOUT the video start-code requirement,
+// so audio records (if they reuse the same framing) are recognized too.
+static bool LooksLikeRecordHeader(byte[] b, int i)
+{
+    if (i + 24 > b.Length) return false;
+    if (b[i + 1] != 0 || b[i + 2] != 0 || b[i + 3] != 0) return false;
+    if (b[i + 13] != 0x01 || b[i + 14] != 0 || b[i + 15] != 0) return false;
+    return b[i + 20] == 0 && b[i + 21] == 0 && b[i + 22] == 0 && b[i + 23] == 0;
+}
+
+static int ReadLE32(byte[] b, int i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24);
+
+static string HexAscii(byte[] b, int start, int endExclusive)
+{
+    var hex = new StringBuilder();
+    var ascii = new StringBuilder();
+    for (var i = start; i < endExclusive; i++)
+    {
+        hex.Append(b[i].ToString("X2")).Append(' ');
+        ascii.Append(b[i] is >= 0x20 and < 0x7F ? (char)b[i] : '.');
+    }
+    return $"{hex.ToString().TrimEnd()}  |{ascii}|";
 }
 
 static string HevcNalName(int type) => type switch

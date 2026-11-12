@@ -3,7 +3,6 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Threading;
 using LibVLCSharp.Shared;
 using Microsoft.Win32;
@@ -29,7 +28,9 @@ public partial class MainWindow : Window
 
     private string? _lastCameraRoot;
     private EventClip? _currentClip;
+    private ObservableCollection<CameraDay>? _days;
     private ObservableCollection<EventClip>? _clips;
+    private readonly Dictionary<CameraDay, ObservableCollection<EventClip>> _clipCache = new();
     private bool _userSeeking;
 
     public MainWindow()
@@ -96,8 +97,6 @@ public partial class MainWindow : Window
         catch { /* best effort */ }
     }
 
-    private CollectionViewSource ClipsView => (CollectionViewSource)Resources["ClipsView"];
-
     private void OpenButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new OpenFolderDialog
@@ -113,15 +112,19 @@ public partial class MainWindow : Window
     {
         try
         {
-            _clips = new ObservableCollection<EventClip>(_crawler.Crawl(folder));
-            ClipsView.Source = _clips;
+            _days = new ObservableCollection<CameraDay>(_crawler.CrawlDays(folder));
+            DayList.ItemsSource = _days;
+            _clipCache.Clear();
+            _clips = null;
+            ClipList.ItemsSource = null;
+            ClipsHeader.Text = "Clips";
             _lastCameraRoot = folder;
             SaveLastFolder(folder);
             RefreshButton.IsEnabled = true;
-            var dayCount = _clips.Select(c => c.DayLabel).Distinct().Count();
-            StatusText.Text = _clips.Count == 0
+            var clipCount = _days.Sum(d => d.Folders.Count);
+            StatusText.Text = _days.Count == 0
                 ? "No clips found in selected folder."
-                : $"{dayCount} day(s), {_clips.Count} clip(s) loaded from {folder}";
+                : $"{_days.Count} day(s), {clipCount} clip(s) found in {folder} — click a day to load its clips";
         }
         catch (Exception ex)
         {
@@ -129,29 +132,85 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void DayList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DayList.SelectedItem is not CameraDay day) return;
+
+        if (!_clipCache.TryGetValue(day, out var clips))
+        {
+            StatusText.Text = $"Loading {day.DayLabel}…";
+            var loaded = await Task.Run(() => _crawler.LoadClips(day));
+            // The user may have clicked another day while this one was loading.
+            if (!ReferenceEquals(DayList.SelectedItem, day)) return;
+            clips = new ObservableCollection<EventClip>(loaded);
+            _clipCache[day] = clips;
+        }
+
+        _clips = clips;
+        ClipList.ItemsSource = clips;
+        ClipsHeader.Text = $"Clips — {day.DayLabel}";
+        StatusText.Text = $"{day.DayLabel}: {clips.Count} clip(s)";
+
+        // Auto-select the first clip so opening a day starts playing it. Assigning ItemsSource
+        // resets the selection to -1, so setting index 0 reliably fires ClipList_SelectionChanged.
+        if (clips.Count > 0) ClipList.SelectedIndex = 0;
+    }
+
     private void DeleteClipButton_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        if ((sender as FrameworkElement)?.DataContext is not EventClip clip) return;
+        if ((sender as FrameworkElement)?.DataContext is not EventClip clip || _clips == null) return;
 
-        var msg = $"Permanently delete this event folder?\n\n{clip.FolderPath}\n\n{clip.ChunkFiles.Count} chunk(s) \u2014 cannot be undone.";
-        if (MessageBox.Show(this, msg, "Delete clip", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-
-        _mediaPlayer.Stop();
-        _currentClip = null;
-        ExportButton.IsEnabled = false;
-        PlayPauseButton.IsEnabled = false;
-        StopButton.IsEnabled = false;
-
+        // Deletes immediately, no confirmation (by request). VLC plays the cached MP4, not the
+        // original .media folder, so deleting the folder won't be blocked even for the clip
+        // currently on screen.
+        var index = _clips.IndexOf(clip);
         try
         {
             ForceDeleteDirectory(clip.FolderPath);
-            _clips?.Remove(clip);
-            StatusText.Text = $"Deleted {Path.GetFileName(clip.FolderPath)}";
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Failed to delete", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        _clips.Remove(clip);
+
+        // Keep the day's clip count (and the day list itself) in sync with the deletion.
+        var dayEmptied = false;
+        if (DayList.SelectedItem is CameraDay day)
+        {
+            day.Folders.RemoveAll(f => f.FolderPath == clip.FolderPath);
+            day.RaiseCountChanged();
+            if (day.Folders.Count == 0)
+            {
+                _clipCache.Remove(day);
+                _days?.Remove(day);
+                ClipList.ItemsSource = null;
+                ClipsHeader.Text = "Clips";
+                dayEmptied = true;
+            }
+        }
+
+        StatusText.Text = $"Deleted {Path.GetFileName(clip.FolderPath)}";
+
+        if (!dayEmptied && _clips.Count > 0)
+        {
+            // Play the clip that shifted into the deleted slot \u2014 the next one chronologically
+            // (or the new last clip if we just deleted the final one).
+            var next = Math.Min(index, _clips.Count - 1);
+            ClipList.SelectedIndex = -1;   // force a change even if 'next' == the old index
+            ClipList.SelectedIndex = next; // fires ClipList_SelectionChanged -> plays
+        }
+        else
+        {
+            // Nothing left to play in this day.
+            _mediaPlayer.Stop();
+            _currentClip = null;
+            ExportButton.IsEnabled = false;
+            PlayPauseButton.IsEnabled = false;
+            StopButton.IsEnabled = false;
         }
     }
 
@@ -197,7 +256,7 @@ public partial class MainWindow : Window
             if (!File.Exists(mp4Path) || new FileInfo(mp4Path).Length == 0)
             {
                 StatusText.Text = "Muxing to MP4\u2026";
-                await Task.Run(() => _ffmpeg.RemuxHevcToMp4(playable.Path, mp4Path, fps));
+                await Task.Run(() => _ffmpeg.RemuxHevcToMp4(playable.Path, mp4Path, fps, playable.AudioPcmPath));
             }
 
             var media = new Media(_libVlc, mp4Path, FromType.FromPath);
@@ -296,7 +355,7 @@ public partial class MainWindow : Window
                     : 25.0;
                 var cachedMp4 = Path.ChangeExtension(playable.Path, ".mp4");
                 if (!File.Exists(cachedMp4) || new FileInfo(cachedMp4).Length == 0)
-                    _ffmpeg.RemuxHevcToMp4(playable.Path, cachedMp4, fps);
+                    _ffmpeg.RemuxHevcToMp4(playable.Path, cachedMp4, fps, playable.AudioPcmPath);
                 File.Copy(cachedMp4, dialog.FileName, overwrite: true);
             });
             StatusText.Text = $"Exported to {dialog.FileName}";
