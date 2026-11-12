@@ -39,7 +39,7 @@ public sealed class MediaCrawler
         day.Folders
             .Select(BuildClip)
             .OfType<EventClip>()
-            .OrderByDescending(e => e.StartUtc)
+            .OrderBy(e => e.StartUtc)
             .ToList();
 
     private static EventFolder? TryParseEventFolder(string folder)

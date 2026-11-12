@@ -34,9 +34,10 @@ public sealed class FFmpegService
     // -framerate so it can synthesize PTS for every NAL unit (raw HEVC carries no timestamps),
     // and tag the video as hvc1 so VLC/QuickTime/MediaFoundation all recognize it.
     // If audioPcmPath is supplied it's muxed in as a second input: raw s16le PCM at the camera's
-    // sample rate, encoded to AAC and resampled to 48 kHz. The camera's native 8 kHz is too low
-    // for WASAPI to negotiate in shared mode (VLC spams "cannot negotiate audio format" and plays
-    // silence), and a standard rate also makes the exported MP4 play everywhere.
+    // sample rate, encoded to AAC and resampled to 48 kHz STEREO. The camera's native 8 kHz mono
+    // can't be negotiated by WASAPI in shared mode (VLC spams "cannot negotiate audio format
+    // 0x88890004" and plays silence) — Windows' shared mix format is 48 kHz stereo, so we match
+    // it (the mono mic is duplicated to both channels). This also makes the export play everywhere.
     // Audio may be shorter than video on clips that drop frames, so we deliberately do NOT pass
     // -shortest (that would truncate the video to match).
     public void RemuxHevcToMp4(string hevcPath, string mp4Path, double fps, string? audioPcmPath = null)
@@ -81,6 +82,8 @@ public sealed class FFmpegService
             psi.ArgumentList.Add("aac");
             psi.ArgumentList.Add("-ar");
             psi.ArgumentList.Add("48000");
+            psi.ArgumentList.Add("-ac");
+            psi.ArgumentList.Add("2");
             psi.ArgumentList.Add("-map");
             psi.ArgumentList.Add("0:v:0");
             psi.ArgumentList.Add("-map");

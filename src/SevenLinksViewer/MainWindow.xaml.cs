@@ -159,41 +159,58 @@ public partial class MainWindow : Window
     private void DeleteClipButton_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        if ((sender as FrameworkElement)?.DataContext is not EventClip clip) return;
+        if ((sender as FrameworkElement)?.DataContext is not EventClip clip || _clips == null) return;
 
-        var msg = $"Permanently delete this event folder?\n\n{clip.FolderPath}\n\n{clip.ChunkFiles.Count} chunk(s) \u2014 cannot be undone.";
-        if (MessageBox.Show(this, msg, "Delete clip", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-
-        _mediaPlayer.Stop();
-        _currentClip = null;
-        ExportButton.IsEnabled = false;
-        PlayPauseButton.IsEnabled = false;
-        StopButton.IsEnabled = false;
-
+        // Deletes immediately, no confirmation (by request). VLC plays the cached MP4, not the
+        // original .media folder, so deleting the folder won't be blocked even for the clip
+        // currently on screen.
+        var index = _clips.IndexOf(clip);
         try
         {
             ForceDeleteDirectory(clip.FolderPath);
-            _clips?.Remove(clip);
-
-            // Keep the day's clip count (and the day list itself) in sync with the deletion.
-            if (DayList.SelectedItem is CameraDay day)
-            {
-                day.Folders.RemoveAll(f => f.FolderPath == clip.FolderPath);
-                day.RaiseCountChanged();
-                if (day.Folders.Count == 0)
-                {
-                    _clipCache.Remove(day);
-                    _days?.Remove(day);
-                    ClipList.ItemsSource = null;
-                    ClipsHeader.Text = "Clips";
-                }
-            }
-
-            StatusText.Text = $"Deleted {Path.GetFileName(clip.FolderPath)}";
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Failed to delete", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        _clips.Remove(clip);
+
+        // Keep the day's clip count (and the day list itself) in sync with the deletion.
+        var dayEmptied = false;
+        if (DayList.SelectedItem is CameraDay day)
+        {
+            day.Folders.RemoveAll(f => f.FolderPath == clip.FolderPath);
+            day.RaiseCountChanged();
+            if (day.Folders.Count == 0)
+            {
+                _clipCache.Remove(day);
+                _days?.Remove(day);
+                ClipList.ItemsSource = null;
+                ClipsHeader.Text = "Clips";
+                dayEmptied = true;
+            }
+        }
+
+        StatusText.Text = $"Deleted {Path.GetFileName(clip.FolderPath)}";
+
+        if (!dayEmptied && _clips.Count > 0)
+        {
+            // Play the clip that shifted into the deleted slot \u2014 the next one chronologically
+            // (or the new last clip if we just deleted the final one).
+            var next = Math.Min(index, _clips.Count - 1);
+            ClipList.SelectedIndex = -1;   // force a change even if 'next' == the old index
+            ClipList.SelectedIndex = next; // fires ClipList_SelectionChanged -> plays
+        }
+        else
+        {
+            // Nothing left to play in this day.
+            _mediaPlayer.Stop();
+            _currentClip = null;
+            ExportButton.IsEnabled = false;
+            PlayPauseButton.IsEnabled = false;
+            StopButton.IsEnabled = false;
         }
     }
 

@@ -19,7 +19,7 @@ public sealed class MediaConcatenator
     public PlayableHevc BuildPlayableHevc(EventClip clip, string cacheDir)
     {
         Directory.CreateDirectory(cacheDir);
-        var safeName = $"{clip.StartUtc:yyyyMMdd_HHmmss}_{Path.GetFileName(clip.FolderPath)}.v13.h265";
+        var safeName = $"{clip.StartUtc:yyyyMMdd_HHmmss}_{Path.GetFileName(clip.FolderPath)}.v14.h265";
         var outPath = Path.Combine(cacheDir, safeName);
         var framesPath = outPath + ".frames";
         var pcmPath = outPath + ".pcm";
